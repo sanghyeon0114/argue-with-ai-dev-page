@@ -1,26 +1,41 @@
-import React from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React, { useState } from 'react';
+import { Sidebar, PageName } from './components/Sidebar';
+import { OverviewPage } from './pages/OverviewPage';
+import { UsersPage, UserDetailPage } from './pages/UsersPage';
+import { SessionsPage, BlockingPage, AffirmationPage, JustificationPage } from './pages/CollectionPages';
+import { User } from './data/firestoreData';
 
-function App() {
+export default function App() {
+  const [page, setPage] = useState<PageName>('overview');
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+
+  function handleSelectUser(user: User) {
+    setSelectedUser(user);
+    setPage('user-detail');
+  }
+
+  function handleBackFromDetail() {
+    setPage('users');
+    setSelectedUser(null);
+  }
+
+  function handleNavigate(p: PageName) {
+    setPage(p);
+    if (p !== 'user-detail') setSelectedUser(null);
+  }
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div style={{ display: 'flex', minHeight: '100vh', background: '#f5f5f3', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <Sidebar currentPage={page} onNavigate={handleNavigate} />
+      <main style={{ flex: 1, overflow: 'auto', padding: '1.5rem' }}>
+        {page === 'overview' && <OverviewPage />}
+        {page === 'users' && <UsersPage onSelectUser={handleSelectUser} />}
+        {page === 'user-detail' && selectedUser && <UserDetailPage user={selectedUser} onBack={handleBackFromDetail} />}
+        {page === 'sessions' && <SessionsPage />}
+        {page === 'blocking' && <BlockingPage />}
+        {page === 'affirmation' && <AffirmationPage />}
+        {page === 'justification' && <JustificationPage />}
+      </main>
     </div>
   );
 }
-
-export default App;
