@@ -1,19 +1,13 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { PageHeader, LoadingSpinner, LastUpdated, T, AppPill, usePolling } from './OverviewPage';
+import React, { useEffect, useState } from 'react';
+import { PageHeader, LoadingSpinner, T, AppPill } from './OverviewPage';
 import {
   Session, AffirmationDoc, JustificationDoc,
-  fetchAllSessions, fetchAllBlocking, fetchAllAffirmation, fetchAllJustification, fmtSec,
+  subscribeAllSessions, subscribeAllBlocking, subscribeAllAffirmation, subscribeAllJustification, fmtSec,
 } from '../data/firestoreData';
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
-function Pill({ children, color = T.color.textSub, bg = 'rgba(0,0,0,0.06)' }: {
-  children: React.ReactNode; color?: string; bg?: string;
-}) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 9px', borderRadius: 99, fontSize: 11, fontWeight: 500, fontFamily: T.font.sans, color, background: bg, whiteSpace: 'nowrap' }}>
-      {children}
-    </span>
-  );
+function Pill({ children, color = T.color.textSub, bg = 'rgba(0,0,0,0.06)' }: { children: React.ReactNode; color?: string; bg?: string }) {
+  return <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 9px', borderRadius: 99, fontSize: 11, fontWeight: 500, fontFamily: T.font.sans, color, background: bg, whiteSpace: 'nowrap' }}>{children}</span>;
 }
 
 function BoolPill({ value, trueLabel = 'true', falseLabel = 'false' }: { value: boolean; trueLabel?: string; falseLabel?: string }) {
@@ -45,17 +39,11 @@ function EmptyState({ message }: { message: string }) {
 export function SessionsPage() {
   const [sessions, setSessions] = useState<(Session & { userId: string; userName: string })[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const s = await fetchAllSessions();
-    setSessions(s); setLoading(false); setRefreshing(false);
-    setLastUpdated(new Date());
+  useEffect(() => {
+    const unsub = subscribeAllSessions(d => { setSessions(d); setLoading(false); });
+    return unsub;
   }, []);
-
-  usePolling(() => load(false));
 
   if (loading) return <LoadingSpinner />;
 
@@ -68,16 +56,13 @@ export function SessionsPage() {
 
   return (
     <div style={{ fontFamily: T.font.sans }}>
-      <PageHeader title="Sessions" subtitle="sessions 컬렉션 전체 데이터" onRefresh={() => load(true)} refreshing={refreshing} />
-      <LastUpdated time={lastUpdated} />
-
+      <PageHeader title="Sessions" subtitle="sessions 컬렉션 전체 데이터" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: '1.25rem' }}>
         <Metric label="총 세션" value={total.toLocaleString()} />
         <Metric label="평균 사용시간" value={fmtSec(avgSec)} />
         <Metric label="총 사용자" value={new Set(sessions.map(s => s.userId)).size} />
         <Metric label="최다 앱" value={<AppPill app={topApp} />} />
       </div>
-
       <TableContainer>
         <div style={{ display: 'grid', gridTemplateColumns: COLS, padding: '9px 20px', gap: 12, background: '#F4F4F2', borderBottom: `1px solid ${T.color.border}` }}>
           {['사용자', '앱', '날짜', '시작', '종료', '사용시간'].map(h => <ColHeader key={h}>{h}</ColHeader>)}
@@ -100,19 +85,13 @@ export function SessionsPage() {
 
 // ── Blocking ──────────────────────────────────────────────────────────────────
 export function BlockingPage() {
-  const [docs, setDocs] = useState<{ id: string; userId: string; userName: string; updatedAt: string; messages: any[]; exit: any }[]>([]);
+  const [docs, setDocs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const d = await fetchAllBlocking();
-    setDocs(d); setLoading(false); setRefreshing(false);
-    setLastUpdated(new Date());
+  useEffect(() => {
+    const unsub = subscribeAllBlocking(d => { setDocs(d); setLoading(false); });
+    return unsub;
   }, []);
-
-  usePolling(() => load(false));
 
   if (loading) return <LoadingSpinner />;
 
@@ -120,9 +99,7 @@ export function BlockingPage() {
 
   return (
     <div style={{ fontFamily: T.font.sans }}>
-      <PageHeader title="Blocking" subtitle="blocking 컬렉션 전체 데이터" onRefresh={() => load(true)} refreshing={refreshing} />
-      <LastUpdated time={lastUpdated} />
-
+      <PageHeader title="Blocking" subtitle="blocking 컬렉션 전체 데이터" />
       <TableContainer>
         <div style={{ display: 'grid', gridTemplateColumns: COLS, padding: '9px 20px', gap: 12, background: '#F4F4F2', borderBottom: `1px solid ${T.color.border}` }}>
           {['사용자', 'Document ID', '메시지', '완료', '업데이트'].map(h => <ColHeader key={h}>{h}</ColHeader>)}
@@ -146,17 +123,11 @@ export function BlockingPage() {
 export function AffirmationPage() {
   const [docs, setDocs] = useState<(AffirmationDoc & { userId: string; userName: string })[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const d = await fetchAllAffirmation();
-    setDocs(d); setLoading(false); setRefreshing(false);
-    setLastUpdated(new Date());
+  useEffect(() => {
+    const unsub = subscribeAllAffirmation(d => { setDocs(d); setLoading(false); });
+    return unsub;
   }, []);
-
-  usePolling(() => load(false));
 
   if (loading) return <LoadingSpinner />;
 
@@ -167,16 +138,13 @@ export function AffirmationPage() {
 
   return (
     <div style={{ fontFamily: T.font.sans }}>
-      <PageHeader title="Affirmation" subtitle="affirmation 컬렉션 전체 데이터" onRefresh={() => load(true)} refreshing={refreshing} />
-      <LastUpdated time={lastUpdated} />
-
+      <PageHeader title="Affirmation" subtitle="affirmation 컬렉션 전체 데이터" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: '1.25rem' }}>
         <Metric label="총 세션" value={docs.length} />
         <Metric label="완료(finished)" value={finished} />
         <Metric label="Exit: COMPLETE" value={methods['COMPLETE'] ?? 0} />
         <Metric label="Exit: BACKGROUND" value={methods['BACKGROUND'] ?? 0} />
       </div>
-
       <TableContainer>
         <div style={{ display: 'grid', gridTemplateColumns: COLS, padding: '9px 20px', gap: 12, background: '#F4F4F2', borderBottom: `1px solid ${T.color.border}` }}>
           {['사용자', 'Document ID', '메시지', '완료', 'Exit', '시각'].map(h => <ColHeader key={h}>{h}</ColHeader>)}
@@ -201,17 +169,11 @@ export function AffirmationPage() {
 export function JustificationPage() {
   const [docs, setDocs] = useState<(JustificationDoc & { userId: string; userName: string })[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const d = await fetchAllJustification();
-    setDocs(d); setLoading(false); setRefreshing(false);
-    setLastUpdated(new Date());
+  useEffect(() => {
+    const unsub = subscribeAllJustification(d => { setDocs(d); setLoading(false); });
+    return unsub;
   }, []);
-
-  usePolling(() => load(false));
 
   if (loading) return <LoadingSpinner />;
 
@@ -224,23 +186,20 @@ export function JustificationPage() {
 
   return (
     <div style={{ fontFamily: T.font.sans }}>
-      <PageHeader title="Justification" subtitle="justification 컬렉션 전체 데이터" onRefresh={() => load(true)} refreshing={refreshing} />
-      <LastUpdated time={lastUpdated} />
-
+      <PageHeader title="Justification" subtitle="justification 컬렉션 전체 데이터" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: '1.25rem' }}>
         <Metric label="총 세션" value={docs.length} />
         <Metric label="완료(finished)" value={finished} />
         <Metric label="score: true" value={passCount} />
         <Metric label="Exit: BACKGROUND" value={methods['BACKGROUND'] ?? 0} />
       </div>
-
       <TableContainer>
         <div style={{ display: 'grid', gridTemplateColumns: COLS, padding: '9px 20px', gap: 12, background: '#F4F4F2', borderBottom: `1px solid ${T.color.border}` }}>
           {['사용자', 'Document ID', '메시지', '완료', 'score true', 'Exit'].map(h => <ColHeader key={h}>{h}</ColHeader>)}
         </div>
         {docs.length === 0 && <EmptyState message="Justification 데이터 없음" />}
         {docs.map((j, i) => {
-          const pass = j.messages.filter(m => m.score === true).length;
+          const pass = j.messages.filter((m: any) => m.score === true).length;
           const total = j.messages.length;
           return (
             <div key={j.id} style={{ display: 'grid', gridTemplateColumns: COLS, padding: '11px 20px', alignItems: 'center', gap: 12, borderBottom: i < docs.length - 1 ? `1px solid ${T.color.border}` : 'none' }}>

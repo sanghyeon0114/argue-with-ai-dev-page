@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   User, Session, AffirmationDoc, JustificationDoc,
-  fetchUsers, fetchAllSessions, fetchAllAffirmation, fetchAllJustification,
+  subscribeUsers, subscribeAllSessions, subscribeAllAffirmation, subscribeAllJustification,
 } from '../data/firestoreData';
 
 // ── Design tokens (shared) ────────────────────────────────────────────────────
@@ -30,26 +30,6 @@ export const T = {
   },
 };
 
-const POLL_INTERVAL_MS = 30_000;
-
-// ── Polling hook ──────────────────────────────────────────────────────────────
-export function usePolling(fetch: () => Promise<void>, intervalMs = POLL_INTERVAL_MS) {
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const start = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(fetch, intervalMs);
-  }, [fetch, intervalMs]);
-
-  useEffect(() => {
-    fetch();
-    start();
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
-
-  return { refresh: fetch };
-}
-
 // ── App badge (shared) ────────────────────────────────────────────────────────
 export function getAppStyle(app: string): { color: string; bg: string } {
   const n = (app ?? '').toLowerCase();
@@ -62,53 +42,18 @@ export function getAppStyle(app: string): { color: string; bg: string } {
 export function AppPill({ app }: { app: string }) {
   const { color, bg } = getAppStyle(app);
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center',
-      padding: '3px 10px', borderRadius: 99,
-      fontSize: 11, fontWeight: 600, fontFamily: T.font.sans,
-      color, background: bg, whiteSpace: 'nowrap', width: 'fit-content',
-    }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600, fontFamily: T.font.sans, color, background: bg, whiteSpace: 'nowrap', width: 'fit-content' }}>
       {app}
     </span>
   );
 }
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
-export function PageHeader({
-  title, subtitle, onRefresh, refreshing,
-}: {
-  title: string; subtitle?: string; onRefresh?: () => void; refreshing?: boolean;
-}) {
+export function PageHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-      <div>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: T.color.text, margin: 0, fontFamily: T.font.sans, letterSpacing: '-0.02em' }}>{title}</h1>
-        {subtitle && <p style={{ fontSize: 13, color: T.color.textMuted, marginTop: 4, marginBottom: 0, fontFamily: T.font.sans }}>{subtitle}</p>}
-      </div>
-      {onRefresh && (
-        <button
-          onClick={onRefresh}
-          disabled={refreshing}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '7px 14px', borderRadius: T.radius.sm,
-            border: `1px solid ${T.color.border}`,
-            background: T.color.surface, cursor: refreshing ? 'not-allowed' : 'pointer',
-            fontSize: 12, fontWeight: 500, color: T.color.textSub,
-            fontFamily: T.font.sans,
-            boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-            opacity: refreshing ? 0.6 : 1,
-            transition: 'all 0.15s',
-          }}
-        >
-          <span style={{
-            display: 'inline-block',
-            animation: refreshing ? 'spin 0.8s linear infinite' : 'none',
-            fontSize: 13,
-          }}>↻</span>
-          {refreshing ? '새로고침 중...' : '새로고침'}
-        </button>
-      )}
+    <div style={{ marginBottom: '1.5rem' }}>
+      <h1 style={{ fontSize: 22, fontWeight: 700, color: T.color.text, margin: 0, fontFamily: T.font.sans, letterSpacing: '-0.02em' }}>{title}</h1>
+      {subtitle && <p style={{ fontSize: 13, color: T.color.textMuted, marginTop: 4, marginBottom: 0, fontFamily: T.font.sans }}>{subtitle}</p>}
     </div>
   );
 }
@@ -117,15 +62,6 @@ export function LoadingSpinner() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, color: T.color.textMuted, fontSize: 13, fontFamily: T.font.sans }}>
       불러오는 중...
-    </div>
-  );
-}
-
-export function LastUpdated({ time }: { time: Date | null }) {
-  if (!time) return null;
-  return (
-    <div style={{ fontSize: 11, color: T.color.textMuted, fontFamily: T.font.sans, marginBottom: '1rem', textAlign: 'right' }}>
-      마지막 업데이트: {time.toLocaleTimeString('ko-KR')}
     </div>
   );
 }
@@ -182,22 +118,17 @@ export function OverviewPage() {
   const [sessions, setSessions] = useState<(Session & { userId: string; userName: string })[]>([]);
   const [affirmations, setAffirmations] = useState<(AffirmationDoc & { userId: string; userName: string })[]>([]);
   const [justifications, setJustifications] = useState<(JustificationDoc & { userId: string; userName: string })[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [ready, setReady] = useState({ users: false, sessions: false, aff: false, just: false });
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const [u, s, a, j] = await Promise.all([fetchUsers(), fetchAllSessions(), fetchAllAffirmation(), fetchAllJustification()]);
-    setUsers(u); setSessions(s); setAffirmations(a); setJustifications(j);
-    setLoading(false); setRefreshing(false);
-    setLastUpdated(new Date());
+  useEffect(() => {
+    const u1 = subscribeUsers(d => { setUsers(d); setReady(r => ({ ...r, users: true })); });
+    const u2 = subscribeAllSessions(d => { setSessions(d); setReady(r => ({ ...r, sessions: true })); });
+    const u3 = subscribeAllAffirmation(d => { setAffirmations(d); setReady(r => ({ ...r, aff: true })); });
+    const u4 = subscribeAllJustification(d => { setJustifications(d); setReady(r => ({ ...r, just: true })); });
+    return () => { u1(); u2(); u3(); u4(); };
   }, []);
 
-  const { refresh } = usePolling(() => load(false));
-
-  const handleRefresh = () => load(true);
-
+  const loading = !ready.users || !ready.sessions || !ready.aff || !ready.just;
   if (loading) return <LoadingSpinner />;
 
   const affFinished = affirmations.filter(a => a.exit?.finished).length;
@@ -211,16 +142,13 @@ export function OverviewPage() {
 
   return (
     <div style={{ fontFamily: T.font.sans }}>
-      <PageHeader title="Dashboard" subtitle="전체 사용자 및 데이터 현황" onRefresh={handleRefresh} refreshing={refreshing} />
-      <LastUpdated time={lastUpdated} />
-
+      <PageHeader title="Dashboard" subtitle="전체 사용자 및 데이터 현황" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: '1.25rem' }}>
         <Metric label="전체 사용자" value={users.length} sub="활성 계정" />
         <Metric label="총 세션" value={sessions.length.toLocaleString()} sub="누적 기록" />
         <Metric label="Affirmation 완료" value={affFinished} sub="finished: true" />
         <Metric label="Justification 완료" value={justFinished} sub="finished: true" />
       </div>
-
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
         <SurfaceCard title="앱 사용 현황">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -238,10 +166,6 @@ export function OverviewPage() {
           <InfoRow label="총 Justification 세션" value={justifications.length} />
         </SurfaceCard>
       </div>
-
-      <style>{`
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      `}</style>
     </div>
   );
 }

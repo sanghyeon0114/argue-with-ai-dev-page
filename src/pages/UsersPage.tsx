@@ -1,25 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { PageHeader, LoadingSpinner, LastUpdated, T, AppPill, usePolling } from './OverviewPage';
+import React, { useState, useEffect } from 'react';
+import { PageHeader, LoadingSpinner, T, AppPill } from './OverviewPage';
 import {
   User, BlockingDoc, AffirmationDoc, JustificationDoc, Session,
-  fetchUsers, fetchBlockingDocs, fetchAffirmationDocs, fetchJustificationDocs, fetchUserSessions, fmtSec,
+  subscribeUsers, subscribeBlockingDocs, subscribeAffirmationDocs,
+  subscribeJustificationDocs, subscribeUserSessions, fmtSec,
 } from '../data/firestoreData';
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
-function Pill({ children, color = T.color.textSub, bg = 'rgba(0,0,0,0.06)' }: {
-  children: React.ReactNode; color?: string; bg?: string;
-}) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 9px', borderRadius: 99, fontSize: 11, fontWeight: 500, fontFamily: T.font.sans, color, background: bg, whiteSpace: 'nowrap' }}>
-      {children}
-    </span>
-  );
+function Pill({ children, color = T.color.textSub, bg = 'rgba(0,0,0,0.06)' }: { children: React.ReactNode; color?: string; bg?: string }) {
+  return <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 9px', borderRadius: 99, fontSize: 11, fontWeight: 500, fontFamily: T.font.sans, color, background: bg, whiteSpace: 'nowrap' }}>{children}</span>;
 }
 
 function StatusDot({ ok }: { ok: boolean }) {
-  return (
-    <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: ok ? T.color.success : T.color.textMuted, boxShadow: ok ? `0 0 0 2px ${T.color.successLight}` : 'none', flexShrink: 0 }} />
-  );
+  return <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: ok ? T.color.success : T.color.textMuted, boxShadow: ok ? `0 0 0 2px ${T.color.successLight}` : 'none', flexShrink: 0 }} />;
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -113,17 +106,11 @@ export function UsersPage({ onSelectUser }: UsersPageProps) {
   const [query, setQuery] = useState('');
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const d = await fetchUsers();
-    setUsers(d); setLoading(false); setRefreshing(false);
-    setLastUpdated(new Date());
+  useEffect(() => {
+    const unsub = subscribeUsers(d => { setUsers(d); setLoading(false); });
+    return unsub;
   }, []);
-
-  usePolling(() => load(false));
 
   const filtered = users.filter(u => u.name.includes(query) || u.id.includes(query));
   if (loading) return <LoadingSpinner />;
@@ -132,16 +119,13 @@ export function UsersPage({ onSelectUser }: UsersPageProps) {
 
   return (
     <div style={{ fontFamily: T.font.sans }}>
-      <PageHeader title="Users" subtitle={`전체 ${users.length}명`} onRefresh={() => load(true)} refreshing={refreshing} />
-      <LastUpdated time={lastUpdated} />
-
+      <PageHeader title="Users" subtitle={`전체 ${users.length}명`} />
       <div style={{ position: 'relative', marginBottom: '1.25rem' }}>
         <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: T.color.textMuted, fontSize: 15, pointerEvents: 'none' }}>⌕</span>
         <input type="text" placeholder="사용자 ID 또는 이름 검색" value={query} onChange={e => setQuery(e.target.value)}
           style={{ width: '100%', boxSizing: 'border-box', padding: '9px 14px 9px 36px', fontSize: 13, fontFamily: T.font.sans, border: `1px solid ${T.color.borderStrong}`, borderRadius: T.radius.md, outline: 'none', color: T.color.text, background: T.color.surface, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
         />
       </div>
-
       <div style={{ background: T.color.surface, borderRadius: T.radius.lg, border: `1px solid ${T.color.border}`, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
         <div style={{ display: 'grid', gridTemplateColumns: COLS, padding: '9px 20px', gap: 8, background: '#F4F4F2', borderBottom: `1px solid ${T.color.border}` }}>
           {['User ID', '이름', '기기', 'Intervention', '접근성', '업데이트', ''].map(h => <ColHeader key={h}>{h}</ColHeader>)}
@@ -256,43 +240,32 @@ function ProfileCard({ title, icon, children }: { title: string; icon: string; c
 function BlockingTab({ userId }: { userId: string }) {
   const [docs, setDocs] = useState<BlockingDoc[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const d = await fetchBlockingDocs(userId);
-    setDocs(d); setLoading(false); setRefreshing(false); setLastUpdated(new Date());
+  useEffect(() => {
+    const unsub = subscribeBlockingDocs(userId, d => { setDocs(d); setLoading(false); });
+    return unsub;
   }, [userId]);
-
-  usePolling(() => load(false));
 
   if (loading) return <LoadingSpinner />;
   if (docs.length === 0) return <EmptyState message="Blocking 데이터 없음" />;
 
   return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-        <RefreshBtn onClick={() => load(true)} refreshing={refreshing} />
-        <LastUpdated time={lastUpdated} />
-      </div>
-      <CollectionContainer>
-        {docs.map(d => (
-          <ExpandableRow key={d.id} summary={
-            <RowSummary id={d.id} badges={[
-              <Pill key="msg">{d.messages.length}개 메시지</Pill>,
-              d.exit ? <Pill key="fin" color={d.exit.finished ? T.color.success : T.color.warn} bg={d.exit.finished ? T.color.successLight : T.color.warnLight}>{d.exit.finished ? '완료' : '미완료'}</Pill> : <Pill key="no-exit" color={T.color.textMuted}>exit 없음</Pill>,
-              d.exit && <Pill key="method" color={T.color.accent} bg={T.color.accentLight}>{d.exit.method}</Pill>,
-            ]} />
-          }>
-            <DetailGrid
-              left={<div><SectionLabel>Messages</SectionLabel>{d.messages.map(m => (<MessageRow key={m.id}><MessageMeta>#{m.id} · {m.updatedAt}</MessageMeta><MessageText>{m.message}</MessageText></MessageRow>))}</div>}
-              right={<ExitDetail exit={d.exit} />}
-            />
-          </ExpandableRow>
-        ))}
-      </CollectionContainer>
-    </>
+    <CollectionContainer>
+      {docs.map(d => (
+        <ExpandableRow key={d.id} summary={
+          <RowSummary id={d.id} badges={[
+            <Pill key="msg">{d.messages.length}개 메시지</Pill>,
+            d.exit ? <Pill key="fin" color={d.exit.finished ? T.color.success : T.color.warn} bg={d.exit.finished ? T.color.successLight : T.color.warnLight}>{d.exit.finished ? '완료' : '미완료'}</Pill> : <Pill key="no-exit" color={T.color.textMuted}>exit 없음</Pill>,
+            d.exit && <Pill key="method" color={T.color.accent} bg={T.color.accentLight}>{d.exit.method}</Pill>,
+          ]} />
+        }>
+          <DetailGrid
+            left={<div><SectionLabel>Messages</SectionLabel>{d.messages.map(m => (<MessageRow key={m.id}><MessageMeta>#{m.id} · {m.updatedAt}</MessageMeta><MessageText>{m.message}</MessageText></MessageRow>))}</div>}
+            right={<ExitDetail exit={d.exit} />}
+          />
+        </ExpandableRow>
+      ))}
+    </CollectionContainer>
   );
 }
 
@@ -300,43 +273,32 @@ function BlockingTab({ userId }: { userId: string }) {
 function AffirmationTab({ userId }: { userId: string }) {
   const [docs, setDocs] = useState<AffirmationDoc[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const d = await fetchAffirmationDocs(userId);
-    setDocs(d); setLoading(false); setRefreshing(false); setLastUpdated(new Date());
+  useEffect(() => {
+    const unsub = subscribeAffirmationDocs(userId, d => { setDocs(d); setLoading(false); });
+    return unsub;
   }, [userId]);
-
-  usePolling(() => load(false));
 
   if (loading) return <LoadingSpinner />;
   if (docs.length === 0) return <EmptyState message="Affirmation 데이터 없음" />;
 
   return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-        <LastUpdated time={lastUpdated} />
-        <RefreshBtn onClick={() => load(true)} refreshing={refreshing} />
-      </div>
-      <CollectionContainer>
-        {docs.map(d => (
-          <ExpandableRow key={d.id} summary={
-            <RowSummary id={d.id} badges={[
-              <Pill key="msg">{d.messages.length}개 메시지</Pill>,
-              d.exit ? <Pill key="fin" color={d.exit.finished ? T.color.success : T.color.warn} bg={d.exit.finished ? T.color.successLight : T.color.warnLight}>{d.exit.finished ? '완료' : '미완료'}</Pill> : <Pill key="no-exit" color={T.color.textMuted}>exit 없음</Pill>,
-              d.exit && <Pill key="method" color={T.color.accent} bg={T.color.accentLight}>{d.exit.method}</Pill>,
-            ]} />
-          }>
-            <DetailGrid
-              left={<div><SectionLabel>Messages</SectionLabel>{d.messages.map(m => (<MessageRow key={m.id}><MessageMeta>{m.question}</MessageMeta><MessageText>{m.answer || <span style={{ color: T.color.textMuted, fontStyle: 'italic' }}>답변 없음</span>}</MessageText></MessageRow>))}</div>}
-              right={<ExitDetail exit={d.exit} />}
-            />
-          </ExpandableRow>
-        ))}
-      </CollectionContainer>
-    </>
+    <CollectionContainer>
+      {docs.map(d => (
+        <ExpandableRow key={d.id} summary={
+          <RowSummary id={d.id} badges={[
+            <Pill key="msg">{d.messages.length}개 메시지</Pill>,
+            d.exit ? <Pill key="fin" color={d.exit.finished ? T.color.success : T.color.warn} bg={d.exit.finished ? T.color.successLight : T.color.warnLight}>{d.exit.finished ? '완료' : '미완료'}</Pill> : <Pill key="no-exit" color={T.color.textMuted}>exit 없음</Pill>,
+            d.exit && <Pill key="method" color={T.color.accent} bg={T.color.accentLight}>{d.exit.method}</Pill>,
+          ]} />
+        }>
+          <DetailGrid
+            left={<div><SectionLabel>Messages</SectionLabel>{d.messages.map(m => (<MessageRow key={m.id}><MessageMeta>{m.question}</MessageMeta><MessageText>{m.answer || <span style={{ color: T.color.textMuted, fontStyle: 'italic' }}>답변 없음</span>}</MessageText></MessageRow>))}</div>}
+            right={<ExitDetail exit={d.exit} />}
+          />
+        </ExpandableRow>
+      ))}
+    </CollectionContainer>
   );
 }
 
@@ -344,48 +306,37 @@ function AffirmationTab({ userId }: { userId: string }) {
 function JustificationTab({ userId }: { userId: string }) {
   const [docs, setDocs] = useState<JustificationDoc[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const d = await fetchJustificationDocs(userId);
-    setDocs(d); setLoading(false); setRefreshing(false); setLastUpdated(new Date());
+  useEffect(() => {
+    const unsub = subscribeJustificationDocs(userId, d => { setDocs(d); setLoading(false); });
+    return unsub;
   }, [userId]);
-
-  usePolling(() => load(false));
 
   if (loading) return <LoadingSpinner />;
   if (docs.length === 0) return <EmptyState message="Justification 데이터 없음" />;
 
   return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-        <LastUpdated time={lastUpdated} />
-        <RefreshBtn onClick={() => load(true)} refreshing={refreshing} />
-      </div>
-      <CollectionContainer>
-        {docs.map(d => {
-          const passCount = d.messages.filter(m => m.score === true).length;
-          const total = d.messages.length;
-          return (
-            <ExpandableRow key={d.id} summary={
-              <RowSummary id={d.id} badges={[
-                <Pill key="msg">{total}개 메시지</Pill>,
-                <Pill key="score" color={T.color.accent} bg={T.color.accentLight}>✓ {passCount}/{total}</Pill>,
-                d.exit ? <Pill key="fin" color={d.exit.finished ? T.color.success : T.color.warn} bg={d.exit.finished ? T.color.successLight : T.color.warnLight}>{d.exit.finished ? '완료' : '미완료'}</Pill> : <Pill key="no-exit" color={T.color.textMuted}>exit 없음</Pill>,
-                d.exit && <Pill key="method" color={T.color.accent} bg={T.color.accentLight}>{d.exit.method}</Pill>,
-              ]} />
-            }>
-              <DetailGrid
-                left={<div><SectionLabel>Messages</SectionLabel>{d.messages.map(m => (<MessageRow key={m.id}><MessageMeta>Q{m.order} · idx:{m.questionIdx} · {m.updatedAt}</MessageMeta><MessageText>{m.answer || <span style={{ color: T.color.textMuted, fontStyle: 'italic' }}>답변 없음</span>}</MessageText>{m.score !== undefined && <div style={{ marginTop: 5 }}><Pill color={m.score ? T.color.success : T.color.danger} bg={m.score ? T.color.successLight : T.color.dangerLight}>{m.score ? '✓ true' : '✗ false'}</Pill></div>}</MessageRow>))}</div>}
-                right={<ExitDetail exit={d.exit} />}
-              />
-            </ExpandableRow>
-          );
-        })}
-      </CollectionContainer>
-    </>
+    <CollectionContainer>
+      {docs.map(d => {
+        const passCount = d.messages.filter(m => m.score === true).length;
+        const total = d.messages.length;
+        return (
+          <ExpandableRow key={d.id} summary={
+            <RowSummary id={d.id} badges={[
+              <Pill key="msg">{total}개 메시지</Pill>,
+              <Pill key="score" color={T.color.accent} bg={T.color.accentLight}>✓ {passCount}/{total}</Pill>,
+              d.exit ? <Pill key="fin" color={d.exit.finished ? T.color.success : T.color.warn} bg={d.exit.finished ? T.color.successLight : T.color.warnLight}>{d.exit.finished ? '완료' : '미완료'}</Pill> : <Pill key="no-exit" color={T.color.textMuted}>exit 없음</Pill>,
+              d.exit && <Pill key="method" color={T.color.accent} bg={T.color.accentLight}>{d.exit.method}</Pill>,
+            ]} />
+          }>
+            <DetailGrid
+              left={<div><SectionLabel>Messages</SectionLabel>{d.messages.map(m => (<MessageRow key={m.id}><MessageMeta>Q{m.order} · idx:{m.questionIdx} · {m.updatedAt}</MessageMeta><MessageText>{m.answer || <span style={{ color: T.color.textMuted, fontStyle: 'italic' }}>답변 없음</span>}</MessageText>{m.score !== undefined && <div style={{ marginTop: 5 }}><Pill color={m.score ? T.color.success : T.color.danger} bg={m.score ? T.color.successLight : T.color.dangerLight}>{m.score ? '✓ true' : '✗ false'}</Pill></div>}</MessageRow>))}</div>}
+              right={<ExitDetail exit={d.exit} />}
+            />
+          </ExpandableRow>
+        );
+      })}
+    </CollectionContainer>
   );
 }
 
@@ -393,53 +344,30 @@ function JustificationTab({ userId }: { userId: string }) {
 function SessionsTab({ userId }: { userId: string }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    const s = await fetchUserSessions(userId);
-    setSessions(s); setLoading(false); setRefreshing(false); setLastUpdated(new Date());
+  useEffect(() => {
+    const unsub = subscribeUserSessions(userId, s => { setSessions(s); setLoading(false); });
+    return unsub;
   }, [userId]);
-
-  usePolling(() => load(false));
 
   if (loading) return <LoadingSpinner />;
   if (sessions.length === 0) return <EmptyState message="세션 없음" />;
 
   const COLS = '140px 1fr 1fr 1fr 1fr';
-
   return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-        <LastUpdated time={lastUpdated} />
-        <RefreshBtn onClick={() => load(true)} refreshing={refreshing} />
+    <div style={{ background: T.color.surface, border: `1px solid ${T.color.border}`, borderRadius: T.radius.lg, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: COLS, padding: '9px 20px', gap: 12, background: '#F4F4F2', borderBottom: `1px solid ${T.color.border}` }}>
+        {['앱', '날짜', '시작', '종료', '사용시간'].map(h => <ColHeader key={h}>{h}</ColHeader>)}
       </div>
-      <div style={{ background: T.color.surface, border: `1px solid ${T.color.border}`, borderRadius: T.radius.lg, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: COLS, padding: '9px 20px', gap: 12, background: '#F4F4F2', borderBottom: `1px solid ${T.color.border}` }}>
-          {['앱', '날짜', '시작', '종료', '사용시간'].map(h => <ColHeader key={h}>{h}</ColHeader>)}
+      {sessions.map((s, i) => (
+        <div key={s.id} style={{ display: 'grid', gridTemplateColumns: COLS, padding: '11px 20px', alignItems: 'center', gap: 12, borderBottom: i < sessions.length - 1 ? `1px solid ${T.color.border}` : 'none' }}>
+          <AppPill app={s.app} />
+          <span style={{ fontSize: 12, color: T.color.text, fontFamily: T.font.sans }}>{s.day}</span>
+          <span style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textSub }}>{s.startTime}</span>
+          <span style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textSub }}>{s.endTime || '—'}</span>
+          <span style={{ fontSize: 12, color: T.color.text, fontWeight: 600, fontFamily: T.font.sans }}>{fmtSec(s.durationSec)}</span>
         </div>
-        {sessions.map((s, i) => (
-          <div key={s.id} style={{ display: 'grid', gridTemplateColumns: COLS, padding: '11px 20px', alignItems: 'center', gap: 12, borderBottom: i < sessions.length - 1 ? `1px solid ${T.color.border}` : 'none' }}>
-            <AppPill app={s.app} />
-            <span style={{ fontSize: 12, color: T.color.text, fontFamily: T.font.sans }}>{s.day}</span>
-            <span style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textSub }}>{s.startTime}</span>
-            <span style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textSub }}>{s.endTime || '—'}</span>
-            <span style={{ fontSize: 12, color: T.color.text, fontWeight: 600, fontFamily: T.font.sans }}>{fmtSec(s.durationSec)}</span>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
-// ── Refresh button ────────────────────────────────────────────────────────────
-function RefreshBtn({ onClick, refreshing }: { onClick: () => void; refreshing: boolean }) {
-  return (
-    <button onClick={onClick} disabled={refreshing}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: T.radius.sm, border: `1px solid ${T.color.border}`, background: T.color.surface, cursor: refreshing ? 'not-allowed' : 'pointer', fontSize: 11, fontWeight: 500, color: T.color.textSub, fontFamily: T.font.sans, opacity: refreshing ? 0.6 : 1 }}>
-      <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.8s linear infinite' : 'none', fontSize: 12 }}>↻</span>
-      {refreshing ? '새로고침 중...' : '새로고침'}
-    </button>
+      ))}
+    </div>
   );
 }
