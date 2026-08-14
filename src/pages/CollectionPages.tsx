@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { PageHeader, LoadingSpinner, T, AppPill } from './OverviewPage';
 import {
-  Session, AffirmationDoc, JustificationDoc,
-  subscribeAllSessions, subscribeAllBlocking, subscribeAllAffirmation, subscribeAllJustification, fmtSec,
+  Session, BlockingDoc, AffirmationDoc, JustificationDoc, ExitData, ScreenUsage, KeyboardUsage,
+  subscribeAllSessions, subscribeAllBlocking, subscribeAllAffirmation, subscribeAllJustification,
+  fetchSessionScreens, fetchSessionKeyboard, fmtSec,
 } from '../data/firestoreData';
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
@@ -35,6 +36,203 @@ function EmptyState({ message }: { message: string }) {
   return <div style={{ padding: '48px', textAlign: 'center', color: T.color.textMuted, fontSize: 13, fontFamily: T.font.sans }}>{message}</div>;
 }
 
+// 클릭하면 펼쳐지는 행 (User 상세 페이지의 Blocking/Affirmation/Justification/Sessions 탭과 동일한 패턴)
+function ExpandableRow({ summary, children }: { summary: React.ReactNode; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ borderBottom: `1px solid ${T.color.border}` }}>
+      <div onClick={() => setOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 20px', cursor: 'pointer', background: open ? T.color.accentLight : 'transparent', transition: 'background 0.15s', userSelect: 'none' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>{summary}</div>
+        <div style={{ width: 22, height: 22, borderRadius: 6, background: open ? T.color.accent : 'rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: 16, flexShrink: 0, transition: 'background 0.15s' }}>
+          <span style={{ color: open ? '#fff' : T.color.textSub, fontSize: 9, display: 'inline-block', transition: 'transform 0.2s', transform: open ? 'rotate(180deg)' : 'none' }}>▼</span>
+        </div>
+      </div>
+      {open && <div style={{ padding: '16px 20px 20px', background: '#FAFAF9', borderTop: `1px solid ${T.color.border}` }}>{children}</div>}
+    </div>
+  );
+}
+
+function DetailGrid({ left, right }: { left: React.ReactNode; right: React.ReactNode }) {
+  return <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}><div>{left}</div><div>{right}</div></div>;
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: T.color.textMuted, fontFamily: T.font.sans, marginBottom: 10, marginTop: 4 }}>{children}</div>;
+}
+
+function MessageRow({ children }: { children: React.ReactNode }) {
+  return <div style={{ padding: '8px 0', borderBottom: `1px solid ${T.color.border}` }}>{children}</div>;
+}
+
+function MessageMeta({ children }: { children: React.ReactNode }) {
+  return <div style={{ fontSize: 10, color: T.color.textMuted, marginBottom: 3, fontFamily: T.font.mono }}>{children}</div>;
+}
+
+function MessageText({ children }: { children: React.ReactNode }) {
+  return <div style={{ fontSize: 13, color: T.color.text, lineHeight: 1.55, fontFamily: T.font.sans }}>{children}</div>;
+}
+
+function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 0', borderBottom: `1px solid ${T.color.border}`, gap: 12 }}>
+      <span style={{ fontSize: 12, color: T.color.textMuted, flexShrink: 0, fontFamily: T.font.sans }}>{label}</span>
+      <span style={{ fontSize: 12, color: T.color.text, textAlign: 'right', fontFamily: T.font.sans }}>{children}</span>
+    </div>
+  );
+}
+
+function ExitDetail({ exit }: { exit: ExitData | null }) {
+  return (
+    <div>
+      <SectionLabel>Exit</SectionLabel>
+      {exit ? (
+        <div style={{ background: '#F9F9F7', border: `1px solid ${T.color.border}`, borderRadius: T.radius.md, padding: '10px 14px' }}>
+          <InfoRow label="finished"><Pill color={exit.finished ? T.color.success : T.color.warn} bg={exit.finished ? T.color.successLight : T.color.warnLight}>{String(exit.finished)}</Pill></InfoRow>
+          <InfoRow label="method"><Pill color={T.color.accent} bg={T.color.accentLight}>{exit.method}</Pill></InfoRow>
+          <InfoRow label="note">{exit.note || '—'}</InfoRow>
+          <InfoRow label="at"><span style={{ fontFamily: T.font.mono, fontSize: 11 }}>{exit.at}</span></InfoRow>
+        </div>
+      ) : (
+        <div style={{ padding: '20px', textAlign: 'center', border: `1px dashed ${T.color.border}`, borderRadius: T.radius.md, color: T.color.textMuted, fontSize: 12, fontFamily: T.font.sans }}>exit 데이터 없음</div>
+      )}
+    </div>
+  );
+}
+
+// ── Total ─────────────────────────────────────────────────────────────────────
+// Sessions/Blocking/Affirmation/Justification 4개 컬렉션을 하나의 타임라인으로 합쳐서 시간순으로 보여준다.
+// 정렬 기준(atMs): session은 startEpoch, 나머지는 logStart()가 기록한 start.atMs.
+type TotalEvent =
+  | { kind: 'session'; atMs: number; data: Session & { userId: string; userName: string } }
+  | { kind: 'blocking'; atMs: number; data: BlockingDoc & { userId: string; userName: string; updatedAt: string } }
+  | { kind: 'affirmation'; atMs: number; data: AffirmationDoc & { userId: string; userName: string } }
+  | { kind: 'justification'; atMs: number; data: JustificationDoc & { userId: string; userName: string } };
+
+const KIND_META: Record<TotalEvent['kind'], { label: string; color: string; bg: string; icon: string }> = {
+  session:       { label: 'Session',       color: '#0369A1',      bg: '#E0F2FE',           icon: '🕐' },
+  blocking:      { label: 'Blocking',      color: T.color.danger, bg: T.color.dangerLight, icon: '🚫' },
+  affirmation:   { label: 'Affirmation',   color: T.color.accent, bg: T.color.accentLight, icon: '💬' },
+  justification: { label: 'Justification', color: T.color.success, bg: T.color.successLight, icon: '✅' },
+};
+
+export function TotalPage() {
+  const [sessions, setSessions] = useState<(Session & { userId: string; userName: string })[]>([]);
+  const [blocking, setBlocking] = useState<(BlockingDoc & { userId: string; userName: string; updatedAt: string })[]>([]);
+  const [affirmation, setAffirmation] = useState<(AffirmationDoc & { userId: string; userName: string })[]>([]);
+  const [justification, setJustification] = useState<(JustificationDoc & { userId: string; userName: string })[]>([]);
+  const [ready, setReady] = useState({ sessions: false, blocking: false, affirmation: false, justification: false });
+
+  useEffect(() => {
+    const u1 = subscribeAllSessions(d => { setSessions(d); setReady(r => ({ ...r, sessions: true })); });
+    const u2 = subscribeAllBlocking(d => { setBlocking(d); setReady(r => ({ ...r, blocking: true })); });
+    const u3 = subscribeAllAffirmation(d => { setAffirmation(d); setReady(r => ({ ...r, affirmation: true })); });
+    const u4 = subscribeAllJustification(d => { setJustification(d); setReady(r => ({ ...r, justification: true })); });
+    return () => { u1(); u2(); u3(); u4(); };
+  }, []);
+
+  const loading = !ready.sessions || !ready.blocking || !ready.affirmation || !ready.justification;
+  if (loading) return <LoadingSpinner />;
+
+  const events: TotalEvent[] = [
+    ...sessions.map(data => ({ kind: 'session' as const, atMs: data.startEpoch ?? 0, data })),
+    ...blocking.map(data => ({ kind: 'blocking' as const, atMs: data.start?.atMs ?? 0, data })),
+    ...affirmation.map(data => ({ kind: 'affirmation' as const, atMs: data.start?.atMs ?? 0, data })),
+    ...justification.map(data => ({ kind: 'justification' as const, atMs: data.start?.atMs ?? 0, data })),
+  ].sort((a, b) => b.atMs - a.atMs);
+
+  return (
+    <div style={{ fontFamily: T.font.sans }}>
+      <PageHeader title="Total" subtitle="Sessions · Blocking · Affirmation · Justification 통합 타임라인 (시간순)" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: '1.25rem' }}>
+        <Metric label="전체 이벤트" value={events.length.toLocaleString()} />
+        <Metric label="Sessions" value={sessions.length} />
+        <Metric label="Blocking" value={blocking.length} />
+        <Metric label="Affirmation" value={affirmation.length} />
+        <Metric label="Justification" value={justification.length} />
+      </div>
+      <TableContainer>
+        {events.length === 0 && <EmptyState message="이벤트 없음" />}
+        {events.map(ev => (
+          <ExpandableRow key={`${ev.kind}-${ev.data.id}`} summary={<TotalEventSummary event={ev} />}>
+            <TotalEventDetail event={ev} />
+          </ExpandableRow>
+        ))}
+      </TableContainer>
+    </div>
+  );
+}
+
+function eventAtLabel(event: TotalEvent): string {
+  if (event.kind === 'session') return event.data.startTime || '—';
+  return event.data.start?.at || '—';
+}
+
+function TotalEventSummary({ event }: { event: TotalEvent }) {
+  const meta = KIND_META[event.kind];
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <Pill color={meta.color} bg={meta.bg}>{meta.icon} {meta.label}</Pill>
+      <span style={{ fontSize: 12, fontWeight: 600, color: T.color.text, fontFamily: T.font.sans, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>{event.data.userName}</span>
+      <Pill>{eventAtLabel(event)}</Pill>
+      {event.kind === 'session' ? (
+        <>
+          <AppPill app={event.data.app} />
+          <Pill color={T.color.accent} bg={T.color.accentLight}>{fmtSec(event.data.durationSec)}</Pill>
+        </>
+      ) : (
+        <>
+          <Pill>{event.data.messages.length}개 메시지</Pill>
+          {event.data.exit ? (
+            <Pill color={event.data.exit.finished ? T.color.success : T.color.warn} bg={event.data.exit.finished ? T.color.successLight : T.color.warnLight}>{event.data.exit.finished ? '완료' : '미완료'}</Pill>
+          ) : (
+            <Pill color={T.color.textMuted}>exit 없음</Pill>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function TotalEventDetail({ event }: { event: TotalEvent }) {
+  if (event.kind === 'session') {
+    return <SessionDetail session={event.data} />;
+  }
+
+  if (event.kind === 'blocking') {
+    const d = event.data;
+    return (
+      <DetailGrid
+        left={<div><SectionLabel>Messages</SectionLabel>{d.messages.map(m => (<MessageRow key={m.id}><MessageMeta>#{m.id} · {m.updatedAt}</MessageMeta><MessageText>{m.message}</MessageText></MessageRow>))}</div>}
+        right={<ExitDetail exit={d.exit} />}
+      />
+    );
+  }
+
+  if (event.kind === 'affirmation') {
+    const d = event.data;
+    return (
+      <DetailGrid
+        left={<div><SectionLabel>Messages</SectionLabel>{d.messages.map(m => (<MessageRow key={m.id}><MessageMeta>{m.question}</MessageMeta><MessageText>{m.answer || <span style={{ color: T.color.textMuted, fontStyle: 'italic' }}>답변 없음</span>}</MessageText></MessageRow>))}</div>}
+        right={<ExitDetail exit={d.exit} />}
+      />
+    );
+  }
+
+  const d = event.data;
+  return (
+    <DetailGrid
+      left={<div><SectionLabel>Messages</SectionLabel>{d.messages.map(m => (
+        <MessageRow key={m.id}>
+          <MessageMeta>Q{m.order} · idx:{m.questionIdx} · {m.updatedAt}</MessageMeta>
+          <MessageText>{m.answer || <span style={{ color: T.color.textMuted, fontStyle: 'italic' }}>답변 없음</span>}</MessageText>
+          {m.score !== undefined && <div style={{ marginTop: 5 }}><Pill color={m.score ? T.color.success : T.color.danger} bg={m.score ? T.color.successLight : T.color.dangerLight}>{m.score ? '✓ true' : '✗ false'}</Pill></div>}
+        </MessageRow>
+      ))}</div>}
+      right={<ExitDetail exit={d.exit} />}
+    />
+  );
+}
+
 // ── Sessions ──────────────────────────────────────────────────────────────────
 export function SessionsPage() {
   const [sessions, setSessions] = useState<(Session & { userId: string; userName: string })[]>([]);
@@ -52,11 +250,10 @@ export function SessionsPage() {
   const appCounts: Record<string, number> = {};
   sessions.forEach(s => { appCounts[s.app] = (appCounts[s.app] || 0) + 1; });
   const topApp = Object.entries(appCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—';
-  const COLS = '1.2fr 120px 1fr 1fr 1fr 1fr';
 
   return (
     <div style={{ fontFamily: T.font.sans }}>
-      <PageHeader title="Sessions" subtitle="sessions 컬렉션 전체 데이터" />
+      <PageHeader title="Sessions" subtitle="sessions 컬렉션 전체 데이터 · 세션을 클릭하면 screens/keyboard 상세가 펼쳐집니다" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: '1.25rem' }}>
         <Metric label="총 세션" value={total.toLocaleString()} />
         <Metric label="평균 사용시간" value={fmtSec(avgSec)} />
@@ -64,22 +261,78 @@ export function SessionsPage() {
         <Metric label="최다 앱" value={<AppPill app={topApp} />} />
       </div>
       <TableContainer>
-        <div style={{ display: 'grid', gridTemplateColumns: COLS, padding: '9px 20px', gap: 12, background: '#F4F4F2', borderBottom: `1px solid ${T.color.border}` }}>
-          {['사용자', '앱', '날짜', '시작', '종료', '사용시간'].map(h => <ColHeader key={h}>{h}</ColHeader>)}
-        </div>
         {sessions.length === 0 && <EmptyState message="세션 없음" />}
-        {sessions.map((s, i) => (
-          <div key={s.id} style={{ display: 'grid', gridTemplateColumns: COLS, padding: '11px 20px', alignItems: 'center', gap: 12, borderBottom: i < sessions.length - 1 ? `1px solid ${T.color.border}` : 'none' }}>
-            <span style={{ fontSize: 12, color: T.color.textSub, fontFamily: T.font.sans, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.userName}</span>
-            <AppPill app={s.app} />
-            <span style={{ fontSize: 12, color: T.color.text, fontFamily: T.font.sans }}>{s.day}</span>
-            <span style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textSub }}>{s.startTime}</span>
-            <span style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textSub }}>{s.endTime || '—'}</span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: T.color.text, fontFamily: T.font.sans }}>{fmtSec(s.durationSec)}</span>
-          </div>
+        {sessions.map(s => (
+          <ExpandableRow key={s.id} summary={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: T.color.text, fontFamily: T.font.sans, marginRight: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{s.userName}</span>
+              <AppPill app={s.app} />
+              <Pill>{s.day}</Pill>
+              <Pill>시작 {s.startTime}</Pill>
+              <Pill>종료 {s.endTime || '—'}</Pill>
+              <Pill color={T.color.accent} bg={T.color.accentLight}>{fmtSec(s.durationSec)}</Pill>
+            </div>
+          }>
+            <SessionDetail session={s} />
+          </ExpandableRow>
         ))}
       </TableContainer>
     </div>
+  );
+}
+
+// 클릭해서 펼쳤을 때만 screens/keyboard 하위 컬렉션을 불러온다 (지연 로딩).
+// 두 목록 모두 fetchSessionScreens/fetchSessionKeyboard에서 startEpoch 오름차순(시간순)으로 정렬해서 내려온다.
+function SessionDetail({ session }: { session: Session & { userId: string; userName: string } }) {
+  const [screens, setScreens] = useState<ScreenUsage[] | null>(null);
+  const [keyboard, setKeyboard] = useState<KeyboardUsage[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setScreens(null);
+    setKeyboard(null);
+    fetchSessionScreens(session.userId, session.sourceCollection, session.id).then(d => { if (!cancelled) setScreens(d); });
+    fetchSessionKeyboard(session.userId, session.sourceCollection, session.id).then(d => { if (!cancelled) setKeyboard(d); });
+    return () => { cancelled = true; };
+  }, [session.userId, session.sourceCollection, session.id]);
+
+  return (
+    <DetailGrid
+      left={
+        <div>
+          <SectionLabel>Screens {screens ? `(${screens.length})` : ''}</SectionLabel>
+          {screens === null ? (
+            <div style={{ fontSize: 12, color: T.color.textMuted, padding: '8px 0', fontFamily: T.font.sans }}>불러오는 중...</div>
+          ) : screens.length === 0 ? (
+            <div style={{ padding: '20px', textAlign: 'center', border: `1px dashed ${T.color.border}`, borderRadius: T.radius.md, color: T.color.textMuted, fontSize: 12, fontFamily: T.font.sans }}>screens 데이터 없음</div>
+          ) : (
+            screens.map(sc => (
+              <MessageRow key={sc.id}>
+                <MessageMeta>{sc.startTime} → {sc.endTime || '—'}</MessageMeta>
+                <MessageText>{sc.screen || <span style={{ color: T.color.textMuted, fontStyle: 'italic' }}>알 수 없음</span>} <span style={{ color: T.color.textMuted, fontSize: 11 }}>· {fmtSec(Math.round(sc.durationMs / 1000))}</span></MessageText>
+              </MessageRow>
+            ))
+          )}
+        </div>
+      }
+      right={
+        <div>
+          <SectionLabel>Keyboard {keyboard ? `(${keyboard.length})` : ''}</SectionLabel>
+          {keyboard === null ? (
+            <div style={{ fontSize: 12, color: T.color.textMuted, padding: '8px 0', fontFamily: T.font.sans }}>불러오는 중...</div>
+          ) : keyboard.length === 0 ? (
+            <div style={{ padding: '20px', textAlign: 'center', border: `1px dashed ${T.color.border}`, borderRadius: T.radius.md, color: T.color.textMuted, fontSize: 12, fontFamily: T.font.sans }}>keyboard 데이터 없음</div>
+          ) : (
+            keyboard.map(k => (
+              <MessageRow key={k.id}>
+                <MessageMeta>{k.startTime} → {k.endTime || '—'}</MessageMeta>
+                <MessageText>{fmtSec(Math.round(k.durationMs / 1000))}</MessageText>
+              </MessageRow>
+            ))
+          )}
+        </div>
+      }
+    />
   );
 }
 

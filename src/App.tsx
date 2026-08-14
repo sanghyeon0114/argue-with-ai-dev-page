@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Sidebar, PageName } from './components/Sidebar';
 import { OverviewPage } from './pages/OverviewPage';
 import { UsersPage, UserDetailPage } from './pages/UsersPage';
-import { SessionsPage, BlockingPage, AffirmationPage, JustificationPage } from './pages/CollectionPages';
+import { TotalPage, SessionsPage, BlockingPage, AffirmationPage, JustificationPage } from './pages/CollectionPages';
 import { User } from './data/firestoreData';
 
 export default function App() {
@@ -31,6 +31,7 @@ export default function App() {
         {page === 'overview' && <OverviewPage />}
         {page === 'users' && <UsersPage onSelectUser={handleSelectUser} />}
         {page === 'user-detail' && selectedUser && <UserDetailPage user={selectedUser} onBack={handleBackFromDetail} />}
+        {page === 'total' && <TotalPage />}
         {page === 'sessions' && <SessionsPage />}
         {page === 'blocking' && <BlockingPage />}
         {page === 'affirmation' && <AffirmationPage />}

@@ -4,6 +4,7 @@ export type PageName =
   | 'overview'
   | 'users'
   | 'user-detail'
+  | 'total'
   | 'sessions'
   | 'blocking'
   | 'affirmation'
@@ -18,6 +19,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { page: 'overview',      label: 'Dashboard',    icon: '⊞' },
   { page: 'users',         label: 'Users',         icon: '👤' },
+  { page: 'total',         label: 'Total',         icon: '∑' },
   { page: 'sessions',      label: 'Sessions',      icon: '🕐' },
   { page: 'blocking',      label: 'Blocking',      icon: '🚫' },
   { page: 'affirmation',   label: 'Affirmation',   icon: '💬' },

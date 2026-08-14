@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { PageHeader, LoadingSpinner, T, AppPill } from './OverviewPage';
 import {
-  User, BlockingDoc, AffirmationDoc, JustificationDoc, Session,
+  User, BlockingDoc, AffirmationDoc, JustificationDoc, Session, ScreenUsage, KeyboardUsage,
   subscribeUsers, subscribeBlockingDocs, subscribeAffirmationDocs,
-  subscribeJustificationDocs, subscribeUserSessions, fmtSec,
+  subscribeJustificationDocs, subscribeUserSessions, fetchSessionScreens, fetchSessionKeyboard, fmtSec,
+  interventionTypeLabel,
 } from '../data/firestoreData';
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
@@ -115,7 +116,7 @@ export function UsersPage({ onSelectUser }: UsersPageProps) {
   const filtered = users.filter(u => u.name.includes(query) || u.id.includes(query));
   if (loading) return <LoadingSpinner />;
 
-  const COLS = '2fr 1fr 1.8fr 120px 80px 1.4fr 28px';
+  const COLS = '2fr 1fr 1.6fr 170px 80px 1.2fr 28px';
 
   return (
     <div style={{ fontFamily: T.font.sans }}>
@@ -140,9 +141,12 @@ export function UsersPage({ onSelectUser }: UsersPageProps) {
             <span style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textSub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.id}</span>
             <span style={{ fontSize: 13, fontWeight: 600, color: T.color.text, fontFamily: T.font.sans }}>{u.name}</span>
             <span style={{ fontSize: 12, color: T.color.textSub, fontFamily: T.font.sans }}>{u.device.manufacturer} {u.device.model}</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <StatusDot ok={u.interventionEnabled} />
-              <span style={{ fontSize: 12, fontFamily: T.font.sans, color: u.interventionEnabled ? T.color.success : T.color.textMuted }}>{u.interventionEnabled ? 'ON' : 'OFF'}</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <StatusDot ok={u.interventionEnabled} />
+                <span style={{ fontSize: 12, fontFamily: T.font.sans, color: u.interventionEnabled ? T.color.success : T.color.textMuted }}>{u.interventionEnabled ? 'ON' : 'OFF'}</span>
+              </div>
+              <span style={{ fontSize: 10, color: T.color.textMuted, fontFamily: T.font.sans, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{interventionTypeLabel(u.interventionType)}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <StatusDot ok={u.accessibilityEnabled} />
@@ -178,7 +182,7 @@ export function UserDetailPage({ user, onBack }: UserDetailPageProps) {
           <div style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textMuted, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.id}</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Pill color={user.interventionEnabled ? T.color.success : T.color.textMuted} bg={user.interventionEnabled ? T.color.successLight : 'rgba(0,0,0,0.05)'}>Intervention {user.interventionEnabled ? 'ON' : 'OFF'}</Pill>
+          <Pill color={user.interventionEnabled ? T.color.success : T.color.textMuted} bg={user.interventionEnabled ? T.color.successLight : 'rgba(0,0,0,0.05)'}>Intervention {user.interventionEnabled ? 'ON' : 'OFF'} · {interventionTypeLabel(user.interventionType)}</Pill>
           <Pill color={user.accessibilityEnabled ? T.color.success : T.color.textMuted} bg={user.accessibilityEnabled ? T.color.successLight : 'rgba(0,0,0,0.05)'}>접근성 {user.accessibilityEnabled ? 'ON' : 'OFF'}</Pill>
         </div>
       </div>
@@ -219,6 +223,7 @@ function ProfileTab({ user }: { user: User }) {
       </ProfileCard>
       <ProfileCard title="intervention" icon="🛡">
         <InfoRow label="enabled"><Pill color={user.interventionEnabled ? T.color.success : T.color.textMuted} bg={user.interventionEnabled ? T.color.successLight : 'rgba(0,0,0,0.05)'}>{user.interventionEnabled ? 'true' : 'false'}</Pill></InfoRow>
+        <InfoRow label="type"><Pill color={T.color.accent} bg={T.color.accentLight}>{interventionTypeLabel(user.interventionType)}</Pill></InfoRow>
       </ProfileCard>
     </div>
   );
@@ -353,21 +358,75 @@ function SessionsTab({ userId }: { userId: string }) {
   if (loading) return <LoadingSpinner />;
   if (sessions.length === 0) return <EmptyState message="세션 없음" />;
 
-  const COLS = '140px 1fr 1fr 1fr 1fr';
   return (
-    <div style={{ background: T.color.surface, border: `1px solid ${T.color.border}`, borderRadius: T.radius.lg, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: COLS, padding: '9px 20px', gap: 12, background: '#F4F4F2', borderBottom: `1px solid ${T.color.border}` }}>
-        {['앱', '날짜', '시작', '종료', '사용시간'].map(h => <ColHeader key={h}>{h}</ColHeader>)}
-      </div>
-      {sessions.map((s, i) => (
-        <div key={s.id} style={{ display: 'grid', gridTemplateColumns: COLS, padding: '11px 20px', alignItems: 'center', gap: 12, borderBottom: i < sessions.length - 1 ? `1px solid ${T.color.border}` : 'none' }}>
-          <AppPill app={s.app} />
-          <span style={{ fontSize: 12, color: T.color.text, fontFamily: T.font.sans }}>{s.day}</span>
-          <span style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textSub }}>{s.startTime}</span>
-          <span style={{ fontFamily: T.font.mono, fontSize: 11, color: T.color.textSub }}>{s.endTime || '—'}</span>
-          <span style={{ fontSize: 12, color: T.color.text, fontWeight: 600, fontFamily: T.font.sans }}>{fmtSec(s.durationSec)}</span>
-        </div>
+    <CollectionContainer>
+      {sessions.map(s => (
+        <ExpandableRow key={s.id} summary={
+          <RowSummary id={s.day} badges={[
+            <AppPill key="app" app={s.app} />,
+            <Pill key="start">시작 {s.startTime}</Pill>,
+            <Pill key="end">종료 {s.endTime || '—'}</Pill>,
+            <Pill key="dur" color={T.color.accent} bg={T.color.accentLight}>{fmtSec(s.durationSec)}</Pill>,
+          ]} />
+        }>
+          <SessionDetail userId={userId} session={s} />
+        </ExpandableRow>
       ))}
-    </div>
+    </CollectionContainer>
+  );
+}
+
+// 클릭해서 펼쳤을 때만 screens/keyboard 하위 컬렉션을 불러온다 (지연 로딩).
+// 두 목록 모두 fetchSessionScreens/fetchSessionKeyboard에서 startEpoch 오름차순(시간순)으로 정렬해서 내려온다.
+function SessionDetail({ userId, session }: { userId: string; session: Session }) {
+  const [screens, setScreens] = useState<ScreenUsage[] | null>(null);
+  const [keyboard, setKeyboard] = useState<KeyboardUsage[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setScreens(null);
+    setKeyboard(null);
+    fetchSessionScreens(userId, session.sourceCollection, session.id).then(d => { if (!cancelled) setScreens(d); });
+    fetchSessionKeyboard(userId, session.sourceCollection, session.id).then(d => { if (!cancelled) setKeyboard(d); });
+    return () => { cancelled = true; };
+  }, [userId, session.sourceCollection, session.id]);
+
+  return (
+    <DetailGrid
+      left={
+        <div>
+          <SectionLabel>Screens {screens ? `(${screens.length})` : ''}</SectionLabel>
+          {screens === null ? (
+            <div style={{ fontSize: 12, color: T.color.textMuted, padding: '8px 0', fontFamily: T.font.sans }}>불러오는 중...</div>
+          ) : screens.length === 0 ? (
+            <div style={{ padding: '20px', textAlign: 'center', border: `1px dashed ${T.color.border}`, borderRadius: T.radius.md, color: T.color.textMuted, fontSize: 12, fontFamily: T.font.sans }}>screens 데이터 없음</div>
+          ) : (
+            screens.map(sc => (
+              <MessageRow key={sc.id}>
+                <MessageMeta>{sc.startTime} → {sc.endTime || '—'}</MessageMeta>
+                <MessageText>{sc.screen || <span style={{ color: T.color.textMuted, fontStyle: 'italic' }}>알 수 없음</span>} <span style={{ color: T.color.textMuted, fontSize: 11 }}>· {fmtSec(Math.round(sc.durationMs / 1000))}</span></MessageText>
+              </MessageRow>
+            ))
+          )}
+        </div>
+      }
+      right={
+        <div>
+          <SectionLabel>Keyboard {keyboard ? `(${keyboard.length})` : ''}</SectionLabel>
+          {keyboard === null ? (
+            <div style={{ fontSize: 12, color: T.color.textMuted, padding: '8px 0', fontFamily: T.font.sans }}>불러오는 중...</div>
+          ) : keyboard.length === 0 ? (
+            <div style={{ padding: '20px', textAlign: 'center', border: `1px dashed ${T.color.border}`, borderRadius: T.radius.md, color: T.color.textMuted, fontSize: 12, fontFamily: T.font.sans }}>keyboard 데이터 없음</div>
+          ) : (
+            keyboard.map(k => (
+              <MessageRow key={k.id}>
+                <MessageMeta>{k.startTime} → {k.endTime || '—'}</MessageMeta>
+                <MessageText>{fmtSec(Math.round(k.durationMs / 1000))}</MessageText>
+              </MessageRow>
+            ))
+          )}
+        </div>
+      }
+    />
   );
 }
